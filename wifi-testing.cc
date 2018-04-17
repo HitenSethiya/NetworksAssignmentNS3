@@ -101,7 +101,9 @@ main (int argc, char *argv[])
   std::string dataRate = "100Mbps";                  /* Application layer datarate. */
   std::string tcpVariant = "TcpHybla";             /* TCP variant type. */
   std::string phyRate = "HtMcs7";                    /* Physical layer bitrate. */
-  double simulationTime = 10;                        /* Simulation time in seconds. */
+  double simulationTime = 10;
+  bool enableRts = 0;
+  bool verifyResults = 0; //used for regression
   bool pcapTracing = false;                          /* PCAP Tracing is enabled or not. */
 
   /* Command line argument parser setup. */
@@ -114,6 +116,8 @@ main (int argc, char *argv[])
   cmd.AddValue ("phyRate", "Physical layer bitrate", phyRate);
   cmd.AddValue ("simulationTime", "Simulation time in seconds", simulationTime);
   cmd.AddValue ("pcap", "Enable/disable PCAP Tracing", pcapTracing);
+  cmd.AddValue ("enableRts", "Enable or disable RTS/CTS", enableRts);
+  cmd.AddValue ("verifyResults", "Enable/disable results verification at the end of the simulation", verifyResults);
   cmd.Parse (argc, argv);
   tcpVariant = std::string ("ns3::") + tcpVariant;
 
@@ -121,8 +125,8 @@ main (int argc, char *argv[])
 
   /* No fragmentation and no RTS/CTS */
   Config::SetDefault ("ns3::WifiRemoteStationManager::FragmentationThreshold", StringValue ("999999"));
-  Config::SetDefault ("ns3::WifiRemoteStationManager::RtsCtsThreshold",  UintegerValue (100));
 
+  Config::SetDefault ("ns3::WifiRemoteStationManager::RtsCtsThreshold", enableRts ? StringValue ("0") : StringValue ("999999"));
   // Select TCP variant
   if (tcpVariant.compare ("ns3::TcpWestwoodPlus") == 0)
     { 
@@ -254,6 +258,16 @@ main (int argc, char *argv[])
   allMon->SetAttribute("DelayBinWidth", DoubleValue(0.001));
         allMon->SetAttribute("JitterBinWidth", DoubleValue(0.001));
         allMon->SetAttribute("PacketSizeBinWidth", DoubleValue(20)); 
+
+
+  /* Enable Traces */
+  if (pcapTracing)
+    {
+      wifiPhy.SetPcapDataLinkType (WifiPhyHelper::DLT_IEEE802_11_RADIO);
+      wifiPhy.EnablePcap ("AccessPoint", recvDevice1);
+      wifiPhy.EnablePcap ("Station0", senders0);
+      wifiPhy.EnablePcap ("Station2", senders2);
+    }
 
   /* Start Simulation */
   Simulator::Stop (Seconds (simulationTime + 2));
