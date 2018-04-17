@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * Author: Hany Assasa <hany.assasa@gmail.com>
+ * Author: Arkadeep Das <arkadeep2k17@hotmail.com>
 .*
  * This is a simple example to test TCP over 802.11n (with MPDU aggregation enabled).
  *
@@ -48,6 +48,9 @@
 #include "ns3/internet-stack-helper.h"
 #include "ns3/ipv4-address-helper.h"
 #include "ns3/ipv4-global-routing-helper.h"
+#include <ns3/flow-monitor-module.h>
+#include <iomanip>
+#include <vector>
 
 NS_LOG_COMPONENT_DEFINE ("wifi-tcp");
 
@@ -63,15 +66,40 @@ CalculateThroughput ()
   double cur = (sink->GetTotalRx () - lastTotalRx) * (double) 8 / 1e5;     /* Convert Application RX Packets to MBits. */
   std::cout << now.GetSeconds () << "s: \t" << cur << " Mbit/s" << std::endl;
   lastTotalRx = sink->GetTotalRx ();
+  // std::cout << cur << "hiten       "<<lastTotalRx;
   Simulator::Schedule (MilliSeconds (100), &CalculateThroughput);
 }
+
+
+void ThroughputMonitor (FlowMonitorHelper* fmhelper, Ptr<FlowMonitor> flowMon)
+  { 
+    flowMon->CheckForLostPackets(); 
+    std::map<FlowId, FlowMonitor::FlowStats> flowStats = flowMon->GetFlowStats();
+    Ptr<Ipv4FlowClassifier> classing = DynamicCast<Ipv4FlowClassifier> (fmhelper->GetClassifier());
+    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator stats = flowStats.begin (); stats != flowStats.end (); ++stats)
+    { 
+      Ipv4FlowClassifier::FiveTuple fiveTuple = classing->FindFlow (stats->first);
+      std::cout<<"Flow ID     : " << stats->first <<" ; "<< fiveTuple.sourceAddress <<" -----> "<<fiveTuple.destinationAddress<<std::endl;
+      std::cout<<"Tx Packets = " << stats->second.txPackets<<std::endl;
+      std::cout<<"Rx Packets = " << stats->second.rxPackets<<std::endl;
+      std::cout<<"Duration    : "<<stats->second.timeLastRxPacket.GetSeconds()-stats->second.timeFirstTxPacket.GetSeconds()<<std::endl;
+      std::cout<<"Last Received Packet  : "<< stats->second.timeLastRxPacket.GetSeconds()<<" Seconds"<<std::endl;
+      std::cout<<"Throughput: " << stats->second.rxBytes * 8.0 / (stats->second.timeLastRxPacket.GetSeconds()-stats->second.timeFirstTxPacket.GetSeconds())/1024/1024 << " Mbps"<<std::endl;
+      std::cout<<"---------------------------------------------------------------------------"<<std::endl;
+    } 
+
+  flowMon->SerializeToXmlFile("lab-5.flowmon", true, true);
+  Simulator::Schedule(MilliSeconds(100),&ThroughputMonitor, fmhelper, flowMon);
+
+      
+  }
 
 int
 main (int argc, char *argv[])
 {
   uint32_t payloadSize = 1472;                       /* Transport layer payload size in bytes. */
   std::string dataRate = "100Mbps";                  /* Application layer datarate. */
-  std::string tcpVariant = "TcpWestwoodPlus";             /* TCP variant type. */
+  std::string tcpVariant = "TcpHybla";             /* TCP variant type. */
   std::string phyRate = "HtMcs7";                    /* Physical layer bitrate. */
   double simulationTime = 10;                        /* Simulation time in seconds. */
   bool pcapTracing = false;                          /* PCAP Tracing is enabled or not. */
@@ -79,18 +107,21 @@ main (int argc, char *argv[])
   /* Command line argument parser setup. */
   CommandLine cmd;
   cmd.AddValue ("payloadSize", "Payload size in bytes", payloadSize);
-  cmd.AddValue ("dataRate", "Application data rate", dataRate);
-  cmd.AddValue ("tcpVariant", "Transport protocol to use: TcpHybla, TcpHybla, TcpWestwood, TcpWestwoodPlus", tcpVariant);
+  cmd.AddValue ("dataRate", "Application data ate", dataRate);
+  cmd.AddValue ("tcpVariant", "Transport protocol to use: TcpNewReno, "
+                "TcpHybla, TcpHighSpeed, TcpHtcp, TcpVegas, TcpScalable, TcpVeno, "
+                "TcpBic, TcpYeah, TcpIllinois, TcpWestwood, TcpWestwoodPlus, TcpLedbat ", tcpVariant);
   cmd.AddValue ("phyRate", "Physical layer bitrate", phyRate);
   cmd.AddValue ("simulationTime", "Simulation time in seconds", simulationTime);
   cmd.AddValue ("pcap", "Enable/disable PCAP Tracing", pcapTracing);
   cmd.Parse (argc, argv);
-
   tcpVariant = std::string ("ns3::") + tcpVariant;
+
+  std::cout << "\nTCPVariant: " << tcpVariant << " Mbit/s" << std::endl;
 
   /* No fragmentation and no RTS/CTS */
   Config::SetDefault ("ns3::WifiRemoteStationManager::FragmentationThreshold", StringValue ("999999"));
-  Config::SetDefault ("ns3::WifiRemoteStationManager::RtsCtsThreshold", StringValue ("999999"));
+  Config::SetDefault ("ns3::WifiRemoteStationManager::RtsCtsThreshold",  UintegerValue (100));
 
   // Select TCP variant
   if (tcpVariant.compare ("ns3::TcpWestwoodPlus") == 0)
@@ -137,29 +168,28 @@ main (int argc, char *argv[])
 
   NodeContainer networkNodes;
   networkNodes.Create (3);
-  Ptr<Node> Sender1 = networkNodes.Get (0);
-  Ptr<Node> Receiver = networkNodes.Get (1);
-  Ptr<Node> Sender2 = networkNodes.Get (2);
+  Ptr<Node> staWifiTransNode0 = networkNodes.Get (0);
+  Ptr<Node> staWifiTransNode2 = networkNodes.Get (2);
+  Ptr<Node> staWifiRecvNode1 = networkNodes.Get (1);
+
   
+  Ssid ssid = Ssid("network");
   
-//Configuring Receiver Device
-  Ssid ssid = Ssid ("network");
+  /* Configure AP */
   wifiMac.SetType ("ns3::ApWifiMac",
                    "Ssid", SsidValue (ssid));
 
-  NetDeviceContainer ReceiverDevice;
-  ReceiverDevice = wifiHelper.Install (wifiPhy, wifiMac, Receiver);
-  
+  NetDeviceContainer recvDevice1;
+  recvDevice1 = wifiHelper.Install (wifiPhy, wifiMac, staWifiRecvNode1);
 
-  /* Configure Sender Device 1 */
+  /* Configure STA */
+  
   wifiMac.SetType ("ns3::StaWifiMac",
                    "Ssid", SsidValue (ssid));
-  NetDeviceContainer SenderDevice1;
-  SenderDevice1 = wifiHelper.Install (wifiPhy, wifiMac, Sender1);
 
-  /* Configure Sender Device 2 */
-  NetDeviceContainer SenderDevice2;
-  SenderDevice2 = wifiHelper.Install (wifiPhy, wifiMac, Sender2);
+  NetDeviceContainer senders0,senders2;
+  senders2 = wifiHelper.Install (wifiPhy, wifiMac, staWifiTransNode2);
+  senders0 = wifiHelper.Install (wifiPhy, wifiMac, staWifiTransNode0);
 
 
   /* Mobility model */
@@ -170,9 +200,9 @@ main (int argc, char *argv[])
   positionAlloc->Add (Vector (0.50, 0.0, 0.0));
   mobility.SetPositionAllocator (positionAlloc);
   mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobility.Install (Sender1);
-  mobility.Install (Sender2);
-  mobility.Install (Receiver);
+  mobility.Install (networkNodes.Get (0));
+  mobility.Install (networkNodes.Get (1));
+  mobility.Install (networkNodes.Get (2));
 
   /* Internet stack */
   InternetStackHelper stack;
@@ -180,57 +210,63 @@ main (int argc, char *argv[])
 
   Ipv4AddressHelper address;
   address.SetBase ("10.0.0.0", "255.255.255.0");
-  Ipv4InterfaceContainer SenderInterface1,ReceiverInterface,SenderInterface2;
-  SenderInterface1 = address.Assign (SenderDevice1);
-  ReceiverInterface = address.Assign (ReceiverDevice);
-  SenderInterface2 = address.Assign (SenderDevice2);
-
+  Ipv4InterfaceContainer staInterface0,staInterface1,staInterface2;
+  staInterface1 = address.Assign (recvDevice1);
+  staInterface0 = address.Assign (senders0);
+  staInterface2 = address.Assign (senders2);
+  std::cout<<"Addresses : "<<staInterface0.GetAddress (0) <<"   "<<staInterface1.GetAddress (0) <<"  "<<staInterface2.GetAddress (0)<<"\n";
 
   /* Populate routing table */
   Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
   /* Install TCP Receiver on the access point */
   PacketSinkHelper sinkHelper ("ns3::TcpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 9));
-  ApplicationContainer sinkApp = sinkHelper.Install (Receiver);
-  sink = StaticCast<PacketSink> (sinkApp.Get (0));
+  ApplicationContainer sinkApp = sinkHelper.Install (staWifiRecvNode1);
+  sink = StaticCast<PacketSink> (sinkApp.Get(0)); 
 
   /* Install TCP/UDP Transmitter on the station */
-  OnOffHelper server ("ns3::TcpSocketFactory", (InetSocketAddress (ReceiverInterface.GetAddress (0), 9)));
-  server.SetAttribute ("PacketSize", UintegerValue (payloadSize));
-  server.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=1]"));
-  server.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
-  server.SetAttribute ("DataRate", DataRateValue (DataRate (dataRate)));
-  ApplicationContainer SenderApp1 = server.Install (Sender1);
-  ApplicationContainer SenderApp2 = server.Install (Sender2);
-  
+  OnOffHelper server0 ("ns3::TcpSocketFactory", (InetSocketAddress (staInterface1.GetAddress (0), 9)));
+  server0.SetAttribute ("PacketSize", UintegerValue (payloadSize));
+  server0.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=1]"));
+  server0.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
+  server0.SetAttribute ("DataRate", DataRateValue (DataRate (dataRate)));
 
+  /* Install TCP/UDP Transmitter on the station */
+  OnOffHelper server2 ("ns3::TcpSocketFactory", (InetSocketAddress (staInterface1.GetAddress (0), 9)));
+  server2.SetAttribute ("PacketSize", UintegerValue (payloadSize));
+  server2.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=1]"));
+  server2.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
+  server2.SetAttribute ("DataRate", DataRateValue (DataRate (dataRate)));
+
+  ApplicationContainer serverApp0 = server0.Install (staWifiTransNode0);
+  ApplicationContainer serverApp2 = server2.Install (staWifiTransNode2);
   /* Start Applications */
-  std::cout<<"Starting Applications\n";
   sinkApp.Start (Seconds (0.0));
-  SenderApp1.Start (Seconds (1.0));
-  SenderApp2.Start(Seconds (1.0));
-  Simulator::Schedule (Seconds (2.1), &CalculateThroughput);
+  serverApp0.Start (Seconds (1.0));
+  serverApp2.Start(Seconds (2.0));
+  // Simulator::Schedule (Seconds (2.1), &CalculateThroughput);
 
-  /* Enable Traces */
-  // if (pcapTracing)
-  //   {
-  //     wifiPhy.SetPcapDataLinkType (WifiPhyHelper::DLT_IEEE802_11_RADIO);
-  //     wifiPhy.EnablePcap ("Stations", staDevices_all);
-  //     // wifiPhy.EnablePcap ("Station1_Recv", staDevices);
-  //   }
+//------Throughput Monitor--------------------------------------------------------------------------------------
+  FlowMonitorHelper fmHelper;
+  Ptr<FlowMonitor> allMon = fmHelper.Install(networkNodes);
+
+
+  allMon->SetAttribute("DelayBinWidth", DoubleValue(0.001));
+        allMon->SetAttribute("JitterBinWidth", DoubleValue(0.001));
+        allMon->SetAttribute("PacketSizeBinWidth", DoubleValue(20)); 
 
   /* Start Simulation */
-  Simulator::Stop (Seconds (simulationTime + 1));
+  Simulator::Stop (Seconds (simulationTime + 2));
+  ThroughputMonitor(&fmHelper ,allMon);
   Simulator::Run ();
-  Simulator::Destroy ();
+  Simulator::Destroy ();  
 
-  double averageThroughput = ((sink->GetTotalRx () * 8) / (1e6  * simulationTime));
-  if (averageThroughput < 50)
-    {
-      NS_LOG_ERROR ("Obtained throughput is not in the expected boundaries!");
-      std::cout<<"wtf!! throughput kum h bc";
-      exit (1);
-    }
-  std::cout << "\nAverage throughput: " << averageThroughput << " Mbit/s" << std::endl;
+  // double averageThroughput = ((sink->GetTotalRx () * 8) / (1e6  * simulationTime));
+  // if (averageThroughput < 50)
+  //   {
+  //     NS_LOG_ERROR ("Obtained throughput is not in the expected boundaries!");
+  //     exit (1);
+  //   }
+  // std::cout << "\nAverage throughput: " << averageThroughput << " Mbit/s" << std::endl;
   return 0;
 }
