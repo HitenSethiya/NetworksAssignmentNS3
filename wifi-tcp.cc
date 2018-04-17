@@ -71,18 +71,16 @@ main (int argc, char *argv[])
 {
   uint32_t payloadSize = 1472;                       /* Transport layer payload size in bytes. */
   std::string dataRate = "100Mbps";                  /* Application layer datarate. */
-  std::string tcpVariant = "TcpHybla";             /* TCP variant type. */
+  std::string tcpVariant = "TcpWestwoodPlus";             /* TCP variant type. */
   std::string phyRate = "HtMcs7";                    /* Physical layer bitrate. */
-  double simulationTime = 50;                        /* Simulation time in seconds. */
+  double simulationTime = 10;                        /* Simulation time in seconds. */
   bool pcapTracing = false;                          /* PCAP Tracing is enabled or not. */
 
   /* Command line argument parser setup. */
   CommandLine cmd;
   cmd.AddValue ("payloadSize", "Payload size in bytes", payloadSize);
   cmd.AddValue ("dataRate", "Application data rate", dataRate);
-  cmd.AddValue ("tcpVariant", "Transport protocol to use: TcpHybla, "
-                "TcpHybla"
-                "TcpWestwood, TcpWestwoodPlus", tcpVariant);
+  cmd.AddValue ("tcpVariant", "Transport protocol to use: TcpHybla, TcpHybla, TcpWestwood, TcpWestwoodPlus", tcpVariant);
   cmd.AddValue ("phyRate", "Physical layer bitrate", phyRate);
   cmd.AddValue ("simulationTime", "Simulation time in seconds", simulationTime);
   cmd.AddValue ("pcap", "Enable/disable PCAP Tracing", pcapTracing);
@@ -139,28 +137,42 @@ main (int argc, char *argv[])
 
   NodeContainer networkNodes;
   networkNodes.Create (3);
-  Ptr<Node> staWifiTransNode0 = networkNodes.Get (0);
-  Ptr<Node> staWifiTransNode2 = networkNodes.Get (2);
-  Ptr<Node> staWifiRecvNode1 = networkNodes.Get (1);
-
-  Ssid ssid = Ssid("network");
-  /* Configure STA */
-  wifiMac.SetType ("ns3::StaWifiMac",
+  Ptr<Node> Sender1 = networkNodes.Get (0);
+  Ptr<Node> Receiver = networkNodes.Get (1);
+  Ptr<Node> Sender2 = networkNodes.Get (2);
+  
+  
+//Configuring Receiver Device
+  Ssid ssid = Ssid ("network");
+  wifiMac.SetType ("ns3::ApWifiMac",
                    "Ssid", SsidValue (ssid));
 
-  NetDeviceContainer staDevices_all;
-  staDevices_all = wifiHelper.Install (wifiPhy, wifiMac, networkNodes);
+  NetDeviceContainer ReceiverDevice;
+  ReceiverDevice = wifiHelper.Install (wifiPhy, wifiMac, Receiver);
+  
+
+  /* Configure Sender Device 1 */
+  wifiMac.SetType ("ns3::StaWifiMac",
+                   "Ssid", SsidValue (ssid));
+  NetDeviceContainer SenderDevice1;
+  SenderDevice1 = wifiHelper.Install (wifiPhy, wifiMac, Sender1);
+
+  /* Configure Sender Device 2 */
+  NetDeviceContainer SenderDevice2;
+  SenderDevice2 = wifiHelper.Install (wifiPhy, wifiMac, Sender2);
 
 
   /* Mobility model */
   MobilityHelper mobility;
   Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator> ();
   positionAlloc->Add (Vector (0.0, 0.0, 0.0));
-  positionAlloc->Add (Vector (250.0, 0.0, 0.0));
-  positionAlloc->Add (Vector (500.0, 0.0, 0.0));
+  positionAlloc->Add (Vector (0.25, 0.0, 0.0));
+  positionAlloc->Add (Vector (0.50, 0.0, 0.0));
   mobility.SetPositionAllocator (positionAlloc);
   mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobility.Install (networkNodes);
+  mobility.Install (Sender1);
+  mobility.Install (Sender2);
+  mobility.Install (Receiver);
 
   /* Internet stack */
   InternetStackHelper stack;
@@ -168,10 +180,10 @@ main (int argc, char *argv[])
 
   Ipv4AddressHelper address;
   address.SetBase ("10.0.0.0", "255.255.255.0");
-  Ipv4InterfaceContainer staInterface0,staInterface1,staInterface2;
-  staInterface0 = address.Assign (staDevices_all.Get(0));
-  staInterface1 = address.Assign (staDevices_all.Get(1));
-  staInterface2 = address.Assign (staDevices_all.Get(2));
+  Ipv4InterfaceContainer SenderInterface1,ReceiverInterface,SenderInterface2;
+  SenderInterface1 = address.Assign (SenderDevice1);
+  ReceiverInterface = address.Assign (ReceiverDevice);
+  SenderInterface2 = address.Assign (SenderDevice2);
 
 
   /* Populate routing table */
@@ -179,30 +191,33 @@ main (int argc, char *argv[])
 
   /* Install TCP Receiver on the access point */
   PacketSinkHelper sinkHelper ("ns3::TcpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 9));
-  ApplicationContainer sinkApp = sinkHelper.Install (staWifiRecvNode1);
+  ApplicationContainer sinkApp = sinkHelper.Install (Receiver);
   sink = StaticCast<PacketSink> (sinkApp.Get (0));
 
   /* Install TCP/UDP Transmitter on the station */
-  OnOffHelper server ("ns3::TcpSocketFactory", (InetSocketAddress (staInterface1.GetAddress (0), 9)));
+  OnOffHelper server ("ns3::TcpSocketFactory", (InetSocketAddress (ReceiverInterface.GetAddress (0), 9)));
   server.SetAttribute ("PacketSize", UintegerValue (payloadSize));
   server.SetAttribute ("OnTime", StringValue ("ns3::ConstantRandomVariable[Constant=1]"));
   server.SetAttribute ("OffTime", StringValue ("ns3::ConstantRandomVariable[Constant=0]"));
   server.SetAttribute ("DataRate", DataRateValue (DataRate (dataRate)));
-  ApplicationContainer serverApp0 = server.Install (staWifiTransNode0);
-  ApplicationContainer serverApp2 = server.Install (staWifiTransNode2);
+  ApplicationContainer SenderApp1 = server.Install (Sender1);
+  ApplicationContainer SenderApp2 = server.Install (Sender2);
+  
+
   /* Start Applications */
+  std::cout<<"Starting Applications\n";
   sinkApp.Start (Seconds (0.0));
-  serverApp0.Start (Seconds (1.0));
-  serverApp2.Start(Seconds (2.0));
-  Simulator::Schedule (Seconds (3.1), &CalculateThroughput);
+  SenderApp1.Start (Seconds (1.0));
+  SenderApp2.Start(Seconds (1.0));
+  Simulator::Schedule (Seconds (2.1), &CalculateThroughput);
 
   /* Enable Traces */
-  if (pcapTracing)
-    {
-      wifiPhy.SetPcapDataLinkType (WifiPhyHelper::DLT_IEEE802_11_RADIO);
-      wifiPhy.EnablePcap ("Stations", staDevices_all);
-      // wifiPhy.EnablePcap ("Station1_Recv", staDevices);
-    }
+  // if (pcapTracing)
+  //   {
+  //     wifiPhy.SetPcapDataLinkType (WifiPhyHelper::DLT_IEEE802_11_RADIO);
+  //     wifiPhy.EnablePcap ("Stations", staDevices_all);
+  //     // wifiPhy.EnablePcap ("Station1_Recv", staDevices);
+  //   }
 
   /* Start Simulation */
   Simulator::Stop (Seconds (simulationTime + 1));
@@ -213,6 +228,7 @@ main (int argc, char *argv[])
   if (averageThroughput < 50)
     {
       NS_LOG_ERROR ("Obtained throughput is not in the expected boundaries!");
+      std::cout<<"wtf!! throughput kum h bc";
       exit (1);
     }
   std::cout << "\nAverage throughput: " << averageThroughput << " Mbit/s" << std::endl;
